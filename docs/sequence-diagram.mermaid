@@ -1,0 +1,64 @@
+sequenceDiagram
+    autonumber
+    participant U as 用户/键盘
+    participant M as cli/main.py
+    participant A as QuantApp
+    participant W as BinanceWSAdapter
+    participant R as BinanceRestClient
+    participant I as IndicatorEngine
+    participant S as RuleEngine
+    participant AM as AlertManager
+    participant D as DashboardRenderer
+
+    M->>A: start(settings)
+    A->>A: storage.init_schema()
+    A->>R: klines(BTC/ETH/SOL/BNB, 1m, 300) 并发预热
+    R-->>A: list[Candle]
+    A->>I: warmup(symbol, candles)
+    A->>W: connect() 组合流 trade+kline_1m（显式 proxy）
+    A->>D: render_loop(state, stop_event) 0.5s 刷新
+    A->>A: spawn _feed_consumer / _command_consumer
+
+    loop 持续行情（单事件循环）
+        W->>W: wait_for(ws.recv(), idle_timeout=60s)
+        W-->>A: events() yield Tick / Candle
+        A->>D: state.update_tick / update_candle
+        alt Candle.is_closed 为真（每分钟收盘）
+            A->>I: update(symbol, candle)
+            I->>I: 环形窗口重建 DataFrame → RSI/MA/量均
+            I-->>A: IndicatorSnapshot
+            A->>S: scan(RuleContext(symbol, candle, window, indicators))
+            S-->>A: list[Alert]（0~N 条）
+            loop 每条 Alert
+                A->>AM: publish(alert)
+                AM->>AM: 冷却检查（同币种同规则 300s）
+                alt 未冷却
+                    AM->>D: state.push_alert（滚动日志）
+                    AM->>AM: 追加 alerts.jsonl
+                    AM->>AM: storage.save_alert（SQLite）
+                else 冷却中
+                    AM-->>A: 丢弃并记 debug 日志
+                end
+            end
+        end
+    end
+
+    U->>D: 按键 p（暂停/恢复扫描）
+    D-->>A: 命令经 asyncio.Queue
+    A->>S: paused = True/False
+    U->>D: 按键 r（规则面板）/ 1-4（切换规则开关）
+    D-->>A: 命令经 asyncio.Queue
+    A->>S: set_enabled(rule, on/off)
+    U->>D: 按键 q（退出）
+    D-->>A: stop_event.set()
+    A->>W: close()
+    A->>R: aclose()
+    A->>A: 取消全部任务，storage.close()
+
+    Note over W,R: 断线重连分支（events() 内部循环）
+    W->>W: recv 超时 / 连接异常
+    W->>W: 指数退避 sleep(1→2→4→…→30s 封顶)
+    W->>R: gap 修复：klines(startTime=last_close+1m, limit=5)
+    R-->>W: 缺失的已收盘 Candle
+    W-->>A: 先 yield 补齐的 Candle
+    W->>W: 重连成功，backoff 重置，reconnect_count+1

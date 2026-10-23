@@ -1,0 +1,267 @@
+classDiagram
+    direction LR
+
+    class Tick {
+        +str symbol
+        +float price
+        +float quantity
+        +int trade_time_ms
+        +bool is_buyer_maker
+        +str source
+    }
+
+    class Candle {
+        +str symbol
+        +int open_time_ms
+        +int close_time_ms
+        +float open
+        +float high
+        +float low
+        +float close
+        +float volume
+        +float quote_volume
+        +int trades
+        +bool is_closed
+    }
+
+    class IndicatorSnapshot {
+        +str symbol
+        +float close
+        +Optional~float~ rsi
+        +Optional~float~ ma_short
+        +Optional~float~ ma_long
+        +Optional~float~ vol_ma
+        +float volume
+        +int ts_ms
+        +Optional~float~ prev_ma_short
+        +Optional~float~ prev_ma_long
+    }
+
+    class Alert {
+        +datetime ts
+        +str symbol
+        +str rule
+        +str message
+        +float trigger_value
+        +float threshold
+        +str level
+    }
+
+    class RuleResult {
+        +bool triggered
+        +str message
+        +float trigger_value
+        +float threshold
+    }
+
+    class FeedStatus {
+        +bool connected
+        +int reconnect_count
+        +float last_msg_monotonic
+        +str detail
+    }
+
+    class FeedAdapter {
+        <<abstract>>
+        +str name
+        +connect()* None
+        +events()* AsyncIterator
+        +close()* None
+        +status()* FeedStatus
+    }
+
+    class BinanceWSAdapter {
+        -list~str~ symbols
+        -str ws_url
+        +Optional~str~ proxy
+        -float idle_timeout_sec
+        -BinanceRestClient rest_client
+        -float backoff_sec
+        +connect() None
+        +events() AsyncIterator
+        +close() None
+        +status() FeedStatus
+        -_parse_raw(raw) list
+        -_gap_repair() list~Candle~
+    }
+
+    class BinanceRestClient {
+        -str base_url
+        +Optional~str~ proxy
+        -float timeout_sec
+        -int max_retries
+        -AsyncClient client
+        +klines(symbol, interval, limit, start_ms, end_ms) list~Candle~
+        +aclose() None
+        -_request_with_retry(path, params) dict
+    }
+
+    class RingBuffer~T~ {
+        -deque _items
+        -int maxlen
+        +append(item) None
+        +to_list() list~T~
+        +__len__() int
+        +clear() None
+    }
+
+    class IndicatorEngine {
+        -dict~str,RingBuffer~ windows
+        -dict~str,IndicatorSnapshot~ last_snapshots
+        -IndicatorConfig config
+        +update(symbol, candle) Optional~IndicatorSnapshot~
+        +warmup(symbol, candles) None
+        +latest(symbol) Optional~IndicatorSnapshot~
+    }
+
+    class RuleContext {
+        +str symbol
+        +Candle candle
+        +list~Candle~ window
+        +IndicatorSnapshot indicators
+        +Optional~IndicatorSnapshot~ prev_indicators
+    }
+
+    class Rule {
+        <<abstract>>
+        +str name
+        +bool enabled
+        +evaluate(ctx)* RuleResult
+        +reset() None
+    }
+
+    class PriceMoveRule {
+        +evaluate(ctx) RuleResult
+    }
+
+    class VolumeSpikeRule {
+        +evaluate(ctx) RuleResult
+    }
+
+    class RsiRule {
+        +evaluate(ctx) RuleResult
+    }
+
+    class MaCrossRule {
+        +evaluate(ctx) RuleResult
+    }
+
+    class RuleEngine {
+        -list~Rule~ rules
+        +scan(ctx) list~Alert~
+        +set_enabled(name, enabled) bool
+        +rule_names() list~str~
+    }
+
+    class AlertManager {
+        -float cooldown_sec
+        -str log_path
+        -Storage store
+        -dict cooldowns
+        +publish(alert) bool
+        +export_csv(path) int
+        +export_json(path) int
+    }
+
+    class Storage {
+        -str db_path
+        +Connection conn
+        +init_schema() None
+        +save_alert(alert) None
+        +save_candles(symbol, candles) None
+        +load_candles(symbol, limit) list~Candle~
+        +query_alerts(symbol, rule, start, end) list~Alert~
+        +close() None
+    }
+
+    class SymbolView {
+        +str symbol
+        +float last_price
+        +float change_pct
+        +float volume
+        +int last_update_ms
+        +str last_signal
+    }
+
+    class DashboardState {
+        +dict~str,SymbolView~ symbols
+        +deque alerts
+        +FeedStatus feed_status
+        +bool paused
+        +dict~str,bool~ rules_enabled
+        +bool rule_panel_open
+        +update_tick(tick) None
+        +update_candle(candle) None
+        +push_alert(alert) None
+        +snapshot() DashboardState
+    }
+
+    class DashboardRenderer {
+        -Live live
+        -float refresh_interval_sec
+        +render_loop(state, stop_event) None
+        -build_quote_table() Table
+        -build_alert_log() Panel
+        -build_status_bar() Panel
+        -build_rule_panel() Panel
+    }
+
+    class KeyboardController {
+        +run_in_thread(loop, command_queue) None
+    }
+
+    class Settings {
+        +NetworkSettings network
+        +MarketSettings market
+        +IndicatorSettings indicators
+        +RuleSettings rules
+        +AlertSettings alerts
+        +StorageSettings storage
+        +CliSettings cli
+    }
+
+    class QuantApp {
+        -Settings settings
+        -Storage storage
+        -BinanceRestClient rest
+        -BinanceWSAdapter adapter
+        -IndicatorEngine indicators
+        -RuleEngine rules
+        -AlertManager alert_manager
+        -DashboardState state
+        +start() None
+        +stop() None
+        -_feed_consumer() None
+        -_command_consumer() None
+    }
+
+    FeedAdapter <|-- BinanceWSAdapter
+    BinanceWSAdapter --> BinanceRestClient : 断线补洞
+    BinanceWSAdapter ..> Tick : 产出
+    BinanceWSAdapter ..> Candle : 产出
+    BinanceRestClient ..> Candle : 产出
+    IndicatorEngine --> RingBuffer : 管理K线窗口
+    IndicatorEngine ..> IndicatorSnapshot : 产出
+    Rule <|-- PriceMoveRule
+    Rule <|-- VolumeSpikeRule
+    Rule <|-- RsiRule
+    Rule <|-- MaCrossRule
+    RuleEngine o-- Rule
+    RuleEngine ..> RuleContext : 消费
+    RuleEngine ..> Alert : 产出
+    AlertManager --> Storage : 持久化
+    AlertManager ..> Alert : 消费
+    Storage ..> Alert : 读写
+    Storage ..> Candle : 读写
+    DashboardRenderer --> DashboardState : 读取快照
+    KeyboardController ..> DashboardState : 命令改状态
+    DashboardState *-- SymbolView
+    QuantApp --> Storage
+    QuantApp --> BinanceWSAdapter
+    QuantApp --> BinanceRestClient
+    QuantApp --> IndicatorEngine
+    QuantApp --> RuleEngine
+    QuantApp --> AlertManager
+    QuantApp --> DashboardState
+    QuantApp ..> Tick : 分发
+    QuantApp ..> Candle : 分发
