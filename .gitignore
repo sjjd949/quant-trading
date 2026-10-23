@@ -1,0 +1,70 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+ENV/
+env/
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 环境变量与密钥（切勿提交） =====
+.env
+.env.*
+*.key
+*.pem
+secrets.yaml
+config.local.*
+
+# ===== 日志与数据文件 =====
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+backtest_results/
+cache/
+data/raw/
+data/history/
+*.h5
+*.feather
+*.parquet
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== 测试与覆盖率 =====
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
