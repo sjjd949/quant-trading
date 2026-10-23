@@ -20,6 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
+# ===== 工具内部数据 =====
+.workbuddy/
+
 # ===== 虚拟环境 =====
 .venv/
 venv/
