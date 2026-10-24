@@ -38,7 +38,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI 主入口，返回进程退出码。"""
-    args = build_parser().parse_args(argv)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    # 子命令路由：quant review ... → 复盘子命令
+    if argv_list and argv_list[0] == "review":
+        from quant.cli.review import review_main
+
+        return review_main(argv_list[1:])
+
+    args = build_parser().parse_args(argv_list)
 
     try:
         settings = load_settings(args.config)
