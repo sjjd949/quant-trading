@@ -58,6 +58,7 @@ class RuleEngine:
                         trigger_value=result.trigger_value,
                         threshold=result.threshold,
                         level=rule.level,
+                        direction=result.direction or "",
                     )
                 )
         return alerts

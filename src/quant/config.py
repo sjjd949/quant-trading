@@ -34,6 +34,10 @@ _ENV_OVERRIDES: dict[str, tuple[str, str, str]] = {
     "QUANT_SYMBOLS": ("market", "symbols", "csv"),
     "QUANT_LOG_PATH": ("alerts", "log_path", "str"),
     "QUANT_DB_PATH": ("storage", "db_path", "str"),
+    "QUANT_PAPER_ENABLED": ("paper", "enabled", "bool"),
+    "QUANT_PAPER_MODE": ("paper", "mode", "str"),
+    "QUANT_PAPER_SLIPPAGE_BPS": ("paper", "slippage_bps", "float"),
+    "QUANT_PAPER_POSITION_PCT": ("paper", "position_pct", "float"),
 }
 
 #: 系统代理环境变量键名（按优先级排列，大小写均覆盖）
@@ -62,12 +66,39 @@ class NetworkSettings:
 
 
 @dataclass(slots=True)
+class AShareSettings:
+    """A股市场配置：自选清单与轮询参数。"""
+
+    enabled: bool = True
+    watchlist: list[str] = field(
+        default_factory=lambda: ["600519.SH", "600036.SH", "000001.SZ", "300750.SZ"]
+    )
+    poll_interval_sec: float = 3.0
+
+
+@dataclass(slots=True)
+class HkUsSettings:
+    """美股/港股市场配置：自选清单（分市场）与轮询参数。"""
+
+    enabled: bool = True
+    watchlist_us: list[str] = field(
+        default_factory=lambda: ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US"]
+    )
+    watchlist_hk: list[str] = field(
+        default_factory=lambda: ["0700.HK", "9988.HK", "3690.HK"]
+    )
+    poll_interval_sec: float = 3.0
+
+
+@dataclass(slots=True)
 class MarketSettings:
-    """市场层配置：监控币种清单。"""
+    """市场层配置：加密货币币种清单 + 跨市场子节。"""
 
     symbols: list[str] = field(
         default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
     )
+    a_share: AShareSettings = field(default_factory=AShareSettings)
+    hk_us: HkUsSettings = field(default_factory=HkUsSettings)
 
 
 @dataclass(slots=True)
@@ -116,12 +147,51 @@ class MaCrossRuleSettings:
 
 @dataclass(slots=True)
 class RuleSettings:
-    """规则层配置：4 条内置规则的开关与参数。"""
+    """规则层配置：4 条内置规则的开关与参数 + 自定义规则登记。"""
 
     price_move: PriceMoveRuleSettings = field(default_factory=PriceMoveRuleSettings)
     volume_spike: VolumeSpikeRuleSettings = field(default_factory=VolumeSpikeRuleSettings)
     rsi: RsiRuleSettings = field(default_factory=RsiRuleSettings)
     ma_cross: MaCrossRuleSettings = field(default_factory=MaCrossRuleSettings)
+    #: 自定义规则登记：``"模块路径:类名"`` 列表（P1-5 插件化）
+    custom: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class InitialCashSettings:
+    """模拟盘各市场初始虚拟资金（计价货币：USDT/CNY/USD/HKD）。"""
+
+    crypto: float = 100000.0
+    a_share: float = 100000.0
+    us: float = 100000.0
+    hk: float = 100000.0
+
+
+@dataclass(slots=True)
+class FeeSettings:
+    """模拟盘各市场费率表（按 PRD-M2 §5.4 / §7 默认值，可配置）。"""
+
+    crypto_taker: float = 0.001
+    a_share_commission: float = 0.00025
+    a_share_stamp_tax: float = 0.001
+    a_share_transfer: float = 0.00001
+    us_commission: float = 0.0
+    hk_commission: float = 0.0003
+    hk_stamp_tax: float = 0.001
+
+
+@dataclass(slots=True)
+class PaperSettings:
+    """模拟盘配置：总开关/模式/初始资金/滑点/费率/仓位约束。"""
+
+    enabled: bool = True
+    mode: str = "manual"
+    initial_cash: InitialCashSettings = field(default_factory=InitialCashSettings)
+    slippage_bps: float = 5.0
+    fees: FeeSettings = field(default_factory=FeeSettings)
+    position_pct: float = 10.0
+    confirm_timeout_sec: float = 300.0
+    one_position_per_symbol: bool = True
 
 
 @dataclass(slots=True)
@@ -157,6 +227,7 @@ class Settings:
     alerts: AlertSettings = field(default_factory=AlertSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
     cli: CliSettings = field(default_factory=CliSettings)
+    paper: PaperSettings = field(default_factory=PaperSettings)
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +290,37 @@ def _build_section(cls: type, data: object, section_name: str):
     return cls(**data)
 
 
+def _ensure_no_unknown(data: dict, cls: type, section_name: str) -> None:
+    """校验顶层节数据不含未知键（嵌套节由 :func:`_build_section` 处理）。"""
+    if not isinstance(data, dict):
+        raise ConfigError(f"[{section_name}] 配置节类型错误，应为表/节")
+    known = {f.name for f in fields(cls)}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ConfigError(f"[{section_name}] 存在未知配置键: {unknown}")
+
+
 def _build_settings(raw: dict) -> Settings:
     """将 TOML 原始字典构建为 Settings 数据类树。"""
     rules_raw = raw.get("rules", {})
+    market_raw = raw.get("market", {})
+    paper_raw = raw.get("paper", {})
+    # 顶层未知键检查（嵌套节由 _build_section 内部校验）
+    _ensure_no_unknown(market_raw, MarketSettings, "market")
+    _ensure_no_unknown(paper_raw, PaperSettings, "paper")
     return Settings(
         network=_build_section(NetworkSettings, raw.get("network", {}), "network"),
-        market=_build_section(MarketSettings, raw.get("market", {}), "market"),
+        market=MarketSettings(
+            symbols=market_raw.get(
+                "symbols", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+            ),
+            a_share=_build_section(
+                AShareSettings, market_raw.get("a_share", {}), "market.a_share"
+            ),
+            hk_us=_build_section(
+                HkUsSettings, market_raw.get("hk_us", {}), "market.hk_us"
+            ),
+        ),
         indicators=_build_section(
             IndicatorSettings, raw.get("indicators", {}), "indicators"
         ),
@@ -241,10 +337,25 @@ def _build_settings(raw: dict) -> Settings:
             ma_cross=_build_section(
                 MaCrossRuleSettings, rules_raw.get("ma_cross", {}), "rules.ma_cross"
             ),
+            custom=list(rules_raw.get("custom", [])),
         ),
         alerts=_build_section(AlertSettings, raw.get("alerts", {}), "alerts"),
         storage=_build_section(StorageSettings, raw.get("storage", {}), "storage"),
         cli=_build_section(CliSettings, raw.get("cli", {}), "cli"),
+        paper=PaperSettings(
+            enabled=paper_raw.get("enabled", True),
+            mode=paper_raw.get("mode", "manual"),
+            initial_cash=_build_section(
+                InitialCashSettings,
+                paper_raw.get("initial_cash", {}),
+                "paper.initial_cash",
+            ),
+            slippage_bps=paper_raw.get("slippage_bps", 5.0),
+            fees=_build_section(FeeSettings, paper_raw.get("fees", {}), "paper.fees"),
+            position_pct=paper_raw.get("position_pct", 10.0),
+            confirm_timeout_sec=paper_raw.get("confirm_timeout_sec", 300.0),
+            one_position_per_symbol=paper_raw.get("one_position_per_symbol", True),
+        ),
     )
 
 
@@ -278,6 +389,8 @@ def _apply_env_overrides(settings: Settings) -> None:
             value: object = [item.strip().upper() for item in raw.split(",") if item.strip()]
         elif kind == "float":
             value = float(raw)
+        elif kind == "bool":
+            value = raw.strip().lower() in ("1", "true", "yes", "on")
         else:
             value = raw
         setattr(section, key, value)
@@ -357,6 +470,16 @@ def _validate(settings: Settings) -> None:
 
     if settings.cli.refresh_interval_sec <= 0:
         raise ConfigError("[cli] refresh_interval_sec 必须为正数")
+
+    paper = settings.paper
+    if paper.mode not in ("auto", "manual"):
+        raise ConfigError("[paper] mode 必须为 'auto' 或 'manual'")
+    if paper.position_pct <= 0:
+        raise ConfigError("[paper] position_pct 必须为正数")
+    if paper.confirm_timeout_sec < 0:
+        raise ConfigError("[paper] confirm_timeout_sec 不能为负")
+    if paper.slippage_bps < 0:
+        raise ConfigError("[paper] slippage_bps 不能为负")
 
 
 def _check_url(url: str, expected_host: str, expected_scheme: str, label: str) -> None:

@@ -401,3 +401,106 @@ def test_check_config_cli_bad_config(tmp_path: Path, capsys: pytest.CaptureFixtu
 def test_repo_root_helper() -> None:
     """conftest 暴露的仓库根目录正确。"""
     assert (REPO_ROOT / "pyproject.toml").is_file()
+
+
+# ---------------------------------------------------------------------------
+# M2 配置键（跨市场 / 模拟盘 / 自定义规则登记）
+# ---------------------------------------------------------------------------
+
+
+def test_m2_config_sections_present_in_repo_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """仓库默认 config.toml 包含 M2 全部新增节且值符合 PRD-M2 §7。"""
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:18888")
+    settings = load_settings(DEFAULT_CONFIG_PATH)
+
+    # 跨市场轮询节
+    assert settings.market.a_share.enabled is True
+    assert settings.market.a_share.watchlist == [
+        "600519.SH",
+        "600036.SH",
+        "000001.SZ",
+        "300750.SZ",
+    ]
+    assert settings.market.a_share.poll_interval_sec == 3.0
+    assert settings.market.hk_us.watchlist_us == [
+        "AAPL.US",
+        "MSFT.US",
+        "NVDA.US",
+        "TSLA.US",
+    ]
+    assert settings.market.hk_us.watchlist_hk == ["0700.HK", "9988.HK", "3690.HK"]
+
+    # 模拟盘节
+    assert settings.paper.enabled is True
+    assert settings.paper.mode == "manual"
+    assert settings.paper.initial_cash.crypto == 100000.0
+    assert settings.paper.initial_cash.a_share == 100000.0
+    assert settings.paper.fees.crypto_taker == 0.001
+    assert settings.paper.fees.a_share_commission == 0.00025
+    assert settings.paper.fees.a_share_stamp_tax == 0.001
+    assert settings.paper.fees.a_share_transfer == 0.00001
+    assert settings.paper.fees.us_commission == 0.0
+    assert settings.paper.fees.hk_commission == 0.0003
+    assert settings.paper.fees.hk_stamp_tax == 0.001
+
+    # 自定义规则登记（默认空）
+    assert settings.rules.custom == []
+
+
+def test_m2_config_minimal_without_sections_uses_defaults(tmp_path: Path) -> None:
+    """最小配置（无 M2 节）回落到 M2 默认值，且校验通过。"""
+    config_path = write_config(
+        tmp_path,
+        '[network]\nproxy = "http://127.0.0.1:63571"\n\n[market]\nsymbols = ["BTCUSDT"]\n\n'
+        "[rules.price_move]\nenabled = true\nwindow_min = 5\nthreshold_pct = 5.0\n",
+    )
+    settings = load_settings(config_path)
+    assert settings.paper.mode == "manual"
+    assert settings.paper.initial_cash.crypto == 100000.0
+    assert settings.market.a_share.enabled is True
+    assert settings.rules.custom == []
+
+
+def test_m2_config_unknown_key_raises(tmp_path: Path) -> None:
+    """M2 节内的未知键同样报错（防止拼写错误）。"""
+    config_path = write_config(
+        tmp_path,
+        '[network]\nproxy = "http://127.0.0.1:63571"\n\n[market]\nsymbols = ["BTCUSDT"]\n\n'
+        '[paper]\nunknownsetting = 1\n',
+    )
+    with pytest.raises(ConfigError, match="未知配置键"):
+        load_settings(config_path)
+
+
+def test_m2_config_bad_paper_mode_raises(tmp_path: Path) -> None:
+    """[paper] mode 非法值报错。"""
+    config_path = write_config(
+        tmp_path,
+        '[network]\nproxy = "http://127.0.0.1:63571"\n\n[market]\nsymbols = ["BTCUSDT"]\n\n'
+        '[paper]\nmode = "fast"\n',
+    )
+    with pytest.raises(ConfigError, match="mode 必须为"):
+        load_settings(config_path)
+
+
+def test_m2_env_override_paper_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """QUANT_PAPER_MODE 覆盖 M2 配置值。"""
+    monkeypatch.setenv("QUANT_PAPER_MODE", "auto")
+    config_path = write_config(
+        tmp_path,
+        '[network]\nproxy = "http://127.0.0.1:63571"\n\n[market]\nsymbols = ["BTCUSDT"]\n\n'
+        "[rules.price_move]\nenabled = true\nwindow_min = 5\nthreshold_pct = 5.0\n",
+    )
+    settings = load_settings(config_path)
+    assert settings.paper.mode == "auto"
+
+
+def test_m2_format_settings_prints_paper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--check-config 输出包含 paper 节（mode/initial_cash/fees）。"""
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:18888")
+    settings = load_settings(DEFAULT_CONFIG_PATH)
+    text = format_settings(settings)
+    assert "paper.mode" in text
+    assert "paper.initial_cash.crypto" in text
+    assert "paper.fees.crypto_taker" in text
+

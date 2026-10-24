@@ -53,7 +53,7 @@ class PriceMoveRule(Rule):
         change_pct = (current_close - past_close) / past_close * 100.0
         if abs(change_pct) < self.threshold_pct:
             return RuleResult(triggered=False)
-        direction = "上涨" if change_pct > 0 else "下跌"
+        direction = "long" if change_pct > 0 else "close"
         return RuleResult(
             triggered=True,
             message=(
@@ -62,6 +62,7 @@ class PriceMoveRule(Rule):
             ),
             trigger_value=round(abs(change_pct), 4),
             threshold=self.threshold_pct,
+            direction=direction,
         )
 
 
@@ -102,6 +103,7 @@ class VolumeSpikeRule(Rule):
             ),
             trigger_value=round(ratio, 4),
             threshold=self.multiplier,
+            direction="long",
         )
 
 
@@ -143,6 +145,7 @@ class RsiRule(Rule):
                 message=f"RSI超买({rsi:.2f}) 阈值{self.overbought:g}",
                 trigger_value=round(rsi, 4),
                 threshold=self.overbought,
+                direction="close",
             )
         if rsi <= self.oversold:
             return RuleResult(
@@ -150,6 +153,7 @@ class RsiRule(Rule):
                 message=f"RSI超卖({rsi:.2f}) 阈值{self.oversold:g}",
                 trigger_value=round(rsi, 4),
                 threshold=self.oversold,
+                direction="long",
             )
         return RuleResult(triggered=False)
 
@@ -210,6 +214,7 @@ class MaCrossRule(Rule):
                 ),
                 trigger_value=round(cur_short - cur_long, 4),
                 threshold=0.0,
+                direction="long",
             )
         if prev_short >= prev_long and cur_short < cur_long:
             return RuleResult(
@@ -220,6 +225,7 @@ class MaCrossRule(Rule):
                 ),
                 trigger_value=round(cur_short - cur_long, 4),
                 threshold=0.0,
+                direction="close",
             )
         return RuleResult(triggered=False)
 

@@ -65,3 +65,63 @@ db_path = "data/quant.db"
 [cli]
 # 看板渲染刷新周期（秒）
 refresh_interval_sec = 0.5
+
+# =====================================================================
+# M2 跨市场监控与模拟盘（P1-1 ~ P1-6）
+# =====================================================================
+
+[market.a_share]
+# A股轮询适配器开关
+enabled = true
+# 默认自选（沪深高流动性蓝筹，可增删）
+watchlist = ["600519.SH", "600036.SH", "000001.SZ", "300750.SZ"]
+# 轮询间隔（秒）
+poll_interval_sec = 3.0
+
+[market.hk_us]
+# 美股/港股轮询适配器开关
+enabled = true
+# 美股默认自选
+watchlist_us = ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US"]
+# 港股默认自选
+watchlist_hk = ["0700.HK", "9988.HK", "3690.HK"]
+# 轮询间隔（秒）
+poll_interval_sec = 3.0
+
+[paper]
+# 模拟盘总开关（false = 退回 M1 仅告警）
+enabled = true
+# 下单模式：auto 自动下单 / manual 待确认
+mode = "manual"
+# 每笔信号投入可用现金比例（%）
+position_pct = 10.0
+# 全局滑点（bps，不利于成交方）；可按市场费率表覆盖
+slippage_bps = 5.0
+# manual 模式待确认超时（秒）
+confirm_timeout_sec = 300.0
+# 单标的单仓位约束（true = 同标的仅一个仓位）
+one_position_per_symbol = true
+
+[paper.initial_cash]
+# 各市场初始虚拟资金（计价货币：USDT/CNY/USD/HKD）
+crypto = 100000.0
+a_share = 100000.0
+us = 100000.0
+hk = 100000.0
+
+[paper.fees]
+# 加密货币 taker 费率
+crypto_taker = 0.001
+# A股：佣金（双边）+ 卖出印花税 + 过户费
+a_share_commission = 0.00025
+a_share_stamp_tax = 0.001
+a_share_transfer = 0.00001
+# 美股佣金
+us_commission = 0.0
+# 港股：佣金 + 印花税（双边）
+hk_commission = 0.0003
+hk_stamp_tax = 0.001
+
+[rules]
+# 自定义规则登记（P1-5 插件化）：["模块路径:类名", ...]
+custom = []
