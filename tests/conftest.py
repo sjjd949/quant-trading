@@ -96,14 +96,31 @@ def write_config(tmp_path: Path, content: str) -> Path:
     return config_path
 
 
-def load_ws_frames() -> list[dict]:
-    """加载 WS 录制帧（JSONL，每行一个原始帧的解析后 JSON 对象）。"""
-    frames: list[dict] = []
-    recording = RECORDINGS_DIR / "binance_ws_frames.jsonl"
-    if not recording.is_file():
+#: WS 录制帧文件（JSONL）
+WS_FRAMES_PATH = RECORDINGS_DIR / "binance_ws_frames.jsonl"
+
+
+def load_ws_frames() -> list:
+    """加载 WS 录制帧的解析后对象列表（帧对象或非法帧字符串）。"""
+    frames: list = []
+    if not WS_FRAMES_PATH.is_file():
         return frames
-    for line in recording.read_text(encoding="utf-8").splitlines():
+    for line in WS_FRAMES_PATH.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
             frames.append(json.loads(line))
     return frames
+
+
+def load_ws_raw_frames() -> list[str]:
+    """加载 WS 录制帧并还原为原始文本帧（与 ``ws.recv()`` 返回值同形态）。
+
+    录制格式（JSONL，每行一帧）：
+    - 组合流帧以 JSON 对象存储，还原时经 ``json.dumps`` 序列化为原始文本；
+    - 非法帧以 JSON 字符串形式存储（如 ``"not-json"``），还原后原样作为
+      原始文本喂给适配器，验证容错跳过路径。
+    """
+    raw_frames: list[str] = []
+    for frame in load_ws_frames():
+        raw_frames.append(frame if isinstance(frame, str) else json.dumps(frame))
+    return raw_frames
