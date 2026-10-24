@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -21,10 +22,22 @@ _ENV_KEYS = ("QUANT_CONFIG", "QUANT_PROXY", "QUANT_SYMBOLS", "QUANT_LOG_PATH", "
 
 
 @pytest.fixture(autouse=True)
-def _clean_quant_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """每个用例前清空 QUANT_* 环境变量，避免相互污染。"""
+def _clean_quant_env() -> None:
+    """每个用例前清空 QUANT_* 环境变量，用例后恢复原值。
+
+    采用快照-恢复（而非 ``monkeypatch.delenv``）：``_load_dotenv`` 会把
+    .env 键写入 ``os.environ``（生产语义），若仅用 delenv，teardown 会把
+    用例中泄漏的值恢复并传播给后续测试文件。
+    """
+    saved = {key: os.environ.get(key) for key in _ENV_KEYS}
     for key in _ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
+        os.environ.pop(key, None)
+    yield
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +131,11 @@ def test_env_override_paths(tmp_config_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_dotenv_file_applied(tmp_config_path: Path) -> None:
-    """与配置同目录的 .env 生效，且不覆盖已有系统环境变量。"""
+    """与配置同目录的 .env 生效，且不覆盖已有系统环境变量。
+
+    环境隔离由 autouse fixture ``_clean_quant_env`` 快照-恢复保证
+    （``_load_dotenv`` 会把键写入 ``os.environ``，需防止跨测试泄漏）。
+    """
     dotenv = tmp_config_path.parent / ".env"
     dotenv.write_text(
         "# 注释行\n\nQUANT_PROXY=\"http://127.0.0.1:7777\"\nQUANT_SYMBOLS=BTCUSDT\n",
