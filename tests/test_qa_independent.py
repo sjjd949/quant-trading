@@ -1544,3 +1544,198 @@ def test_end_to_end_pause_stops_scanning_but_not_data(tmp_path: Path) -> None:
     assert app.state.symbols["BTCUSDT"].last_price == 112.0
     assert app.indicators.latest("BTCUSDT") is not None
     app.storage.close()
+
+
+# ---------------------------------------------------------------------------
+# L. 代理解析三级优先级（第 2 轮回退工程师 08c06dc 的独立验证）
+#    优先级：QUANT_PROXY > HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy
+#    > config.toml [network] proxy（留空 = 自动使用系统代理）
+# ---------------------------------------------------------------------------
+
+
+def _proxy_env(monkeypatch: pytest.MonkeyPatch, **kwargs: str) -> None:
+    """清空全部代理类环境变量后按 kwargs 设置（模拟不同部署环境）。"""
+    for key in ("QUANT_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in kwargs.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_resolve_proxy_unit_quant_wins() -> None:
+    """resolve_proxy：QUANT_PROXY 优先于一切。"""
+    from quant.config import resolve_proxy
+
+    with _proxy_env_ctx(QUANT_PROXY="http://quant:1", HTTPS_PROXY="http://system:2"):
+        assert resolve_proxy("http://config:3") == "http://quant:1"
+
+
+def test_resolve_proxy_unit_system_key_priority() -> None:
+    """resolve_proxy：HTTPS 类键优先于 HTTP 类键；每个键单独设置时均可生效。
+
+    平台注意：Windows 环境变量大小写不敏感（``os.environ`` 将
+    ``HTTPS_PROXY``/``https_proxy`` 视为同一键，后写覆盖先写），
+    故大小写变体无法同时持有不同值；本测试只断言跨类的优先级
+    与单键可用性（大小写变体均覆盖）。
+    """
+    from quant.config import resolve_proxy
+
+    # HTTPS 类（大写/小写变体）优先于 HTTP 类
+    with _proxy_env_ctx(HTTPS_PROXY="http://a:1", HTTP_PROXY="http://c:3"):
+        assert resolve_proxy() == "http://a:1"
+    with _proxy_env_ctx(https_proxy="http://b:2", http_proxy="http://d:4"):
+        assert resolve_proxy() == "http://b:2"
+    with _proxy_env_ctx(HTTPS_PROXY="http://a:1", http_proxy="http://d:4"):
+        assert resolve_proxy() == "http://a:1"
+    # 仅 HTTP 类时取 HTTP 值（大小写变体分别验证）
+    with _proxy_env_ctx(HTTP_PROXY="http://c:3"):
+        assert resolve_proxy() == "http://c:3"
+    with _proxy_env_ctx(http_proxy="http://d:4"):
+        assert resolve_proxy() == "http://d:4"
+
+
+def test_resolve_proxy_unit_blank_quant_proxy_ignored() -> None:
+    """resolve_proxy：QUANT_PROXY 为空白视为未设置，落到系统代理。"""
+    from quant.config import resolve_proxy
+
+    with _proxy_env_ctx(QUANT_PROXY="   ", HTTPS_PROXY="http://system:2"):
+        assert resolve_proxy("http://config:3") == "http://system:2"
+
+
+def test_resolve_proxy_unit_config_fallback_and_strip() -> None:
+    """resolve_proxy：无环境变量时用配置值并去空白；全空返回空串。"""
+    from quant.config import resolve_proxy
+
+    with _proxy_env_ctx():
+        assert resolve_proxy("  http://config:3  ") == "http://config:3"
+        assert resolve_proxy(None) == ""
+        assert resolve_proxy("   ") == ""
+
+
+class _proxy_env_ctx:
+    """上下文管理器版代理环境设置（供 resolve_proxy 单元测试使用）。"""
+
+    def __init__(self, **kwargs: str) -> None:
+        self._kwargs = kwargs
+        self._saved: dict[str, str | None] = {}
+
+    def __enter__(self):
+        keys = ("QUANT_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+        self._saved = {key: os.environ.get(key) for key in keys}
+        for key in keys:
+            os.environ.pop(key, None)
+        for key, value in self._kwargs.items():
+            os.environ[key] = value
+        return self
+
+    def __exit__(self, *exc) -> None:
+        for key, value in self._saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_load_settings_empty_config_proxy_uses_system_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：config.toml proxy 留空 → 自动使用系统代理环境变量。"""
+    _proxy_env(monkeypatch, HTTPS_PROXY="http://127.0.0.1:63764")
+    path = _write_config(tmp_path, _config_text(proxy='""'))
+    settings = load_settings(path)
+    assert settings.network.proxy == "http://127.0.0.1:63764"
+
+
+def test_load_settings_config_proxy_lowest_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：系统代理环境变量优先于 config.toml 已填写的 proxy（文档化优先级）。"""
+    _proxy_env(monkeypatch, http_proxy="http://system-low:9")
+    path = _write_config(tmp_path, _config_text(proxy='"http://config-filled:8"'))
+    settings = load_settings(path)
+    assert settings.network.proxy == "http://system-low:9"
+
+
+def test_load_settings_config_proxy_used_when_no_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：无任何代理环境变量时使用 config.toml 填写的 proxy。"""
+    _proxy_env(monkeypatch)
+    path = _write_config(tmp_path, _config_text(proxy='"http://config-only:7"'))
+    settings = load_settings(path)
+    assert settings.network.proxy == "http://config-only:7"
+
+
+def test_load_settings_quant_proxy_overrides_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：QUANT_PROXY 覆盖系统代理与 config.toml（最高优先级）。"""
+    _proxy_env(monkeypatch, QUANT_PROXY="http://quant-win:1", HTTPS_PROXY="http://system:2")
+    path = _write_config(tmp_path, _config_text(proxy='"http://config:3"'))
+    settings = load_settings(path)
+    assert settings.network.proxy == "http://quant-win:1"
+
+
+def test_load_settings_blank_quant_proxy_falls_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：QUANT_PROXY 空白视为未设置，落到系统代理。"""
+    _proxy_env(monkeypatch, QUANT_PROXY="  ", HTTPS_PROXY="http://system:2")
+    path = _write_config(tmp_path, _config_text(proxy='""'))
+    settings = load_settings(path)
+    assert settings.network.proxy == "http://system:2"
+
+
+def test_load_settings_all_proxy_sources_empty_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """集成：三级来源全空 → 中文 ConfigError，文案列出三种配置方式。"""
+    _proxy_env(monkeypatch)
+    path = _write_config(tmp_path, _config_text(proxy='""'))
+    with pytest.raises(ConfigError) as exc_info:
+        load_settings(path)
+    message = str(exc_info.value)
+    assert "proxy" in message
+    assert "HTTPS_PROXY" in message and "QUANT_PROXY" in message and "config.toml" in message
+
+
+def test_repo_config_toml_proxy_is_empty_by_default() -> None:
+    """仓库 config/config.toml 的 proxy 默认留空（随会话自动用系统代理）。"""
+    import tomllib
+
+    raw = tomllib.loads((REPO_ROOT / "config" / "config.toml").read_text(encoding="utf-8"))
+    assert raw["network"]["proxy"] == ""
+
+
+def test_quant_app_feed_status_syncs_state() -> None:
+    """QuantApp.feed_status()：同步适配器状态到看板并返回（第 2 轮回退验证）。
+
+    第 1 轮发现的 app.py 重复定义已删除，本用例证明唯一保留定义
+    的行为：调用后 DashboardState.feed_status 被更新且返回值一致。
+    """
+    from quant.app import QuantApp
+
+    settings = Settings()
+    settings.network.proxy = "http://127.0.0.1:63571"
+    settings.market.symbols = ["BTCUSDT"]
+    settings.alerts.log_path = str(Path("data") / "alerts.jsonl")
+
+    class _Rest:
+        async def klines(self, symbol, interval="1m", limit=300, start_ms=None, end_ms=None):
+            return []
+
+        async def aclose(self) -> None:
+            pass
+
+    adapter = QaScriptedAdapter([])
+    app = QuantApp(
+        settings,
+        adapter=adapter,
+        rest_client=_Rest(),
+        storage=Storage(":memory:"),
+    )
+    status = app.feed_status()
+    assert isinstance(status, FeedStatus)
+    assert status.connected is True  # QaScriptedAdapter 状态
+    # 看板状态已被同步
+    assert app.state.feed_status.connected is True
+    assert app.state.feed_status.detail == "脚本"
