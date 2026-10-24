@@ -40,6 +40,9 @@ class FeedAdapter(ABC):
     #: 适配器名称（子类覆盖，如 ``"binance_ws"``）
     name: str = ""
 
+    #: 延迟数据标注（延迟源如腾讯 ``"~15min"``；实时源为空串）
+    latency_tag: str = ""
+
     @abstractmethod
     async def connect(self) -> None:
         """建立连接（具体生命周期由 ``events()`` 内部管理的实现可仅复位状态）。"""
