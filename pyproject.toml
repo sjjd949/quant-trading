@@ -27,3 +27,8 @@ addopts = "-m 'not network'"
 markers = [
     "network: 标记需要真实外部网络的连通性测试（默认排除，仅手动运行）",
 ]
+filterwarnings = [
+    # pandas-ta 第三方库对 pandas 4 的弃用告警（非本项目代码，统一静默）
+    "ignore:.*dayofyear is deprecated.*:Warning",
+    "ignore:.*copy_on_write.*deprecated.*:Warning",
+]
