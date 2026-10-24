@@ -17,7 +17,6 @@ from typing import Any, Awaitable, Callable, Optional
 import httpx
 
 from quant.models import Candle
-from quant.utils.timeutils import now_ms
 
 logger = logging.getLogger("quant.feeds.binance_rest")
 
@@ -205,8 +204,3 @@ def new_rest_client(settings: Any) -> BinanceRestClient:
         proxy=settings.network.proxy,
         timeout_sec=settings.network.rest_timeout_sec,
     )
-
-
-def rest_now_ms() -> int:
-    """当前 epoch ms（供 gap 修复判断已收盘，测试可注入替代）。"""
-    return now_ms()
