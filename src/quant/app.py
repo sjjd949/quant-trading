@@ -238,12 +238,6 @@ class QuantApp:
         self.rules.set_enabled(name, new_state)
         self.state.rules_enabled[name] = new_state
 
-    def feed_status(self) -> FeedStatus:
-        """同步适配器状态到看板（供外部轮询/测试断言）。"""
-        status = self.adapter.status()
-        self.state.set_feed_status(status)
-        return status
-
     # ------------------------------------------------------------------
     # 预热与监督
     # ------------------------------------------------------------------
