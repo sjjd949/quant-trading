@@ -408,6 +408,22 @@ class Storage:
                 (order_id, signal_id),
             )
 
+    def update_signal_status(
+        self, signal_id: int, status: str, order_id: int | None = None
+    ) -> None:
+        """更新信号状态（可选同时关联订单），用于 pending→ordered 等迁移。"""
+        with self.conn:
+            if order_id is not None:
+                self.conn.execute(
+                    "UPDATE signals SET status = ?, order_id = ? WHERE id = ?",
+                    (status, order_id, signal_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE signals SET status = ? WHERE id = ?",
+                    (status, signal_id),
+                )
+
     def save_order(self, order: Order) -> int:
         """写入一笔订单，回填 ``order.id`` 并返回。"""
         with self.conn:
