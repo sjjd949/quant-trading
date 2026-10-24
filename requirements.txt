@@ -1,6 +1,10 @@
-websockets>=15.0
-httpx>=0.27
-pandas>=2.2
-pandas-ta>=0.3.14b0
-rich>=13.0
-pytest>=8.0
+# ===== 运行时依赖 =====
+websockets>=15.0     # WS 适配器（新 API 支持 proxy= 显式传参），实测 17.3
+httpx>=0.27          # 异步 REST + MockTransport 可测，实测 0.28.1
+pandas>=2.2          # 指标计算数据帧，实测 3.1.0（与 pandas-ta 0.4.71b0 兼容）
+pandas-ta>=0.3.14b0  # RSI/SMA 指标（.ta 访问器在 pandas 3 返回 Series），实测 0.4.71b0
+rich>=13.0           # CLI Live 看板，实测 15.0.0
+
+# ===== 开发 / 测试依赖 =====
+pytest>=8.0          # 测试框架，实测 9.1.1
+pytest-cov>=4.1      # 覆盖率统计（P0-8：核心模块覆盖率 ≥80%）

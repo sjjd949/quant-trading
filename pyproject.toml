@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-trading"
+version = "0.1.0"
+description = "个人量化交易程序：币安实时行情、指标扫描、规则告警与 CLI 看板（P0）"
+requires-python = ">=3.13"
+dependencies = [
+    "websockets>=15.0",
+    "httpx>=0.27",
+    "pandas>=2.2",
+    "pandas-ta>=0.3.14b0",
+    "rich>=13.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# src-layout：测试无需安装即可导入 quant 包
+pythonpath = ["src"]
+testpaths = ["tests"]
+# 默认排除需要真实网络的连通性测试（工程禁网铁律）
+addopts = "-m 'not network'"
+markers = [
+    "network: 标记需要真实外部网络的连通性测试（默认排除，仅手动运行）",
+]

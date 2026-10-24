@@ -54,6 +54,10 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+# 运行时数据目录（quant.db / alerts.jsonl / logs 子目录）
+data/*.jsonl
+data/*.db
+data/logs/
 backtest_results/
 cache/
 data/raw/
@@ -68,6 +72,7 @@ data/history/
 # ===== 测试与覆盖率 =====
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .mypy_cache/
 .ruff_cache/

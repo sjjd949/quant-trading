@@ -1,7 +1,9 @@
 """数据源连通性测试：验证三个市场的行情接口在当前网络环境下可用。
 
-运行方式：pytest tests/test_connectivity.py -v
+⚠️ 本模块需要真实外部网络，默认被 pyproject 的 ``-m 'not network'`` 排除；
+仅手动运行：``pytest tests/test_connectivity.py -m network -v``。
 """
+
 import asyncio
 import json
 import os
@@ -9,6 +11,9 @@ import os
 import httpx
 import pytest
 import websockets
+
+# 整个模块标记为 network：默认不运行，保证本地/交付 pytest 全绿且不触网
+pytestmark = pytest.mark.network
 
 BINANCE_WS_URL = "wss://data-stream.binance.vision/ws/btcusdt@trade"
 EASTMONEY_URL = (

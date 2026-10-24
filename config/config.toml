@@ -1,0 +1,65 @@
+# 量化程序主配置（P0）
+# 约定：币安仅使用 .vision 镜像域名；所有外网请求必须经本地代理。
+
+[network]
+# 本地代理（必填）：币安主域名被墙，.vision 域名亦须经代理访问
+proxy = "http://127.0.0.1:63571"
+# WS 组合流端点（multiplexed stream）
+ws_url = "wss://data-stream.binance.vision/stream"
+# REST 端点（K 线/历史数据）
+rest_url = "https://data-api.binance.vision"
+# WS 业务级空闲看门狗：超过该秒数未收到任何消息则重连
+ws_idle_timeout_sec = 60.0
+# REST 单次请求超时（秒）
+rest_timeout_sec = 10.0
+# WS 重连指数退避上限（秒）
+ws_max_backoff_sec = 30.0
+
+[market]
+# 默认监控币种（大写），可在配置中增删
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+
+[indicators]
+# 每币种已收盘 1min K 线环形窗口容量
+candle_window = 300
+# RSI 周期
+rsi_length = 14
+# 短期/长期均线周期
+ma_short = 5
+ma_long = 25
+# 成交量均量周期
+vol_ma_length = 20
+
+[rules.price_move]
+enabled = true
+# 回看窗口（分钟）与涨跌幅阈值（%）
+window_min = 5
+threshold_pct = 5.0
+
+[rules.volume_spike]
+enabled = true
+# 当前量超过均量的倍数阈值
+multiplier = 3.0
+
+[rules.rsi]
+enabled = true
+# 超买/超卖阈值
+overbought = 70.0
+oversold = 30.0
+
+[rules.ma_cross]
+enabled = true
+
+[alerts]
+# 同币种同规则告警冷却（秒），防止重复轰炸
+cooldown_sec = 300.0
+# 告警滚动日志（JSONL，相对仓库根解析）
+log_path = "data/alerts.jsonl"
+
+[storage]
+# SQLite 数据库路径（相对仓库根解析）
+db_path = "data/quant.db"
+
+[cli]
+# 看板渲染刷新周期（秒）
+refresh_interval_sec = 0.5
