@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    participant A as QuantApp
+    participant AD as 适配器(币安/A股/腾讯)
+    participant I as IndicatorEngine
+    participant S as RuleEngine
+    participant AM as AlertManager
+    participant P as PaperEngine
+    participant D as Dashboard
+
+    A->>A: init_schema + PaperEngine
+    A->>AD: connect() × N
+    A->>A: spawn _adapter_loop × N (监督重启)
+    loop 每适配器事件流
+        AD-->>A: yield Tick / Candle
+        A->>D: update_tick / update_candle (+延迟标注)
+        alt Candle.is_closed
+            A->>I: update(symbol, candle)
+            I-->>A: snapshot
+            A->>S: scan(RuleContext)
+            S-->>A: list[Alert](含 direction)
+            loop 每条 Alert
+                A->>AM: publish(alert)
+                AM-->>A: published?
+                opt published 且 paper.enabled 且 direction
+                    A->>P: on_signal(SignalRecord)
+                    alt auto
+                        P->>P: 滑点价/费用/数量 → Order→Fill→PositionEvent→落库
+                    else manual
+                        P->>P: 入 pending 队列
+                    end
+                end
+            end
+        end
+    end
+    A->>P: _pending_watchdog: expire_pending() (300s)
+    Note over A,D: 键盘 y 确认 / n 忽略 / m 切模式 → 命令队列

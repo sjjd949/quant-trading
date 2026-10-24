@@ -1,0 +1,80 @@
+classDiagram
+    direction LR
+
+    class FeedAdapter {
+        <<abstract>>
+        +str name
+        +str latency_tag
+        +connect() None
+        +events() AsyncIterator
+        +close() None
+        +status() FeedStatus
+    }
+    class EastmoneyPollAdapter {
+        +preheat(limit) dict
+        -_parse_primary(text) list
+        -_parse_backup(text) list
+    }
+    class TencentPollAdapter {
+        +latency_tag = "~15min"
+        -_parse(text) list
+    }
+    class PollingFeedAdapter {
+        <<abstract>>
+        +watchlist list
+        +poll_interval_sec float
+        -_fetch(source) list
+        -_sleep_and_grow() None
+    }
+    class CandleAggregator {
+        +add(quote) tuple
+        +flush() list
+    }
+    class PaperEngine {
+        +accounts dict
+        +positions dict
+        +pending deque
+        +mode str
+        +on_signal(signal) None
+        +confirm_head() None
+        +ignore_head() None
+        +expire_pending() None
+        +toggle_mode() str
+        +accounts_view() dict
+        +pending_view() list
+        -_execute(signal) None
+        -_fee(market, side, amount) float
+        -_size_qty(cash, price, market) float
+    }
+    class Storage {
+        +save_signal(signal) int
+        +save_order(order) int
+        +save_fill(fill) int
+        +save_position(event) int
+        +query_signals(...) list
+        +query_trade_lifecycle(symbol) dict
+        +account_summary(market) dict
+    }
+    class QuantApp {
+        +adapters list
+        +paper PaperEngine
+        +_adapter_loop(adapter) None
+        -_dispatch(event, adapter) None
+        -_pending_watchdog() None
+    }
+    class DashboardState {
+        +adapter_statuses dict
+        +paper_accounts dict
+        +pending list
+        +paper_mode str
+    }
+
+    FeedAdapter <|-- PollingFeedAdapter
+    PollingFeedAdapter <|-- EastmoneyPollAdapter
+    PollingFeedAdapter <|-- TencentPollAdapter
+    PollingFeedAdapter *-- CandleAggregator
+    QuantApp --> FeedAdapter : N 适配器
+    QuantApp --> PaperEngine
+    QuantApp --> Storage
+    PaperEngine --> Storage
+    QuantApp --> DashboardState
