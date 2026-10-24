@@ -36,6 +36,9 @@ _ENV_OVERRIDES: dict[str, tuple[str, str, str]] = {
     "QUANT_DB_PATH": ("storage", "db_path", "str"),
 }
 
+#: 系统代理环境变量键名（按优先级排列，大小写均覆盖）
+_SYSTEM_PROXY_KEYS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+
 
 class ConfigError(ValueError):
     """配置加载或校验失败（消息为中文，便于直接展示给用户）。"""
@@ -186,6 +189,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
 
     settings = _build_settings(raw)
     _apply_env_overrides(settings)
+    # 代理解析：QUANT_PROXY > 系统代理环境变量 > config.toml 值（可为空）
+    settings.network.proxy = resolve_proxy(settings.network.proxy)
 
     base_dir = config_path.resolve().parent.parent
     _resolve_paths(settings, base_dir)
@@ -263,11 +268,11 @@ def _load_dotenv(path: Path) -> None:
 
 
 def _apply_env_overrides(settings: Settings) -> None:
-    """按 ``QUANT_<节>_<键>`` 约定用环境变量覆盖配置。"""
+    """按 ``QUANT_<节>_<键>`` 约定用环境变量覆盖配置（空白值视为未设置）。"""
     for env_key, (section_name, key, kind) in _ENV_OVERRIDES.items():
         raw = os.environ.get(env_key)
-        if raw is None or raw == "":
-            continue
+        if raw is None or raw.strip() == "":
+            continue  # 未设置或空白：保留下层配置（与 resolve_proxy 语义一致）
         section = getattr(settings, section_name)
         if kind == "csv":
             value: object = [item.strip().upper() for item in raw.split(",") if item.strip()]
@@ -300,7 +305,11 @@ def _resolve_one(base_dir: Path, raw_path: str) -> Path:
 def _validate(settings: Settings) -> None:
     """校验生效配置，失败抛出中文 :class:`ConfigError`。"""
     if not settings.network.proxy.strip():
-        raise ConfigError("[network] proxy 不能为空：所有外网请求必须经本地代理")
+        raise ConfigError(
+            "[network] proxy 不能为空：请设置系统代理环境变量"
+            "（HTTPS_PROXY/HTTP_PROXY）、或设置 QUANT_PROXY、"
+            "或在 config.toml 的 [network] proxy 填写代理地址"
+        )
     _check_url(
         settings.network.rest_url,
         REST_HOST,
@@ -385,6 +394,29 @@ def mask_proxy(proxy: str) -> str:
     user = parts.username or ""
     netloc = f"{user}:***@{host}"
     return parts._replace(netloc=netloc).geturl()
+
+
+def resolve_proxy(proxy: str | None = None) -> str:
+    """解析生效代理地址（三级优先级，从高到低）。
+
+    1. ``QUANT_PROXY`` 环境变量（项目专用显式配置）；
+    2. 系统代理环境变量 ``HTTPS_PROXY``/``https_proxy``/``HTTP_PROXY``/``http_proxy``；
+    3. 配置文件 ``[network] proxy`` 的值（可为空，表示自动使用系统代理）。
+
+    参数:
+        proxy: 配置文件中的 proxy 值（``None`` 或空字符串表示未配置）。
+
+    返回:
+        生效代理地址（已去首尾空白）；三级来源均为空时返回空字符串。
+    """
+    quant_proxy = os.environ.get("QUANT_PROXY")
+    if quant_proxy and quant_proxy.strip():
+        return quant_proxy.strip()
+    for key in _SYSTEM_PROXY_KEYS:
+        value = os.environ.get(key)
+        if value and value.strip():
+            return value.strip()
+    return (proxy or "").strip()
 
 
 def format_settings(settings: Settings) -> str:

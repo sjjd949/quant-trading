@@ -2,8 +2,10 @@
 # 约定：币安仅使用 .vision 镜像域名；所有外网请求必须经本地代理。
 
 [network]
-# 本地代理（必填）：币安主域名被墙，.vision 域名亦须经代理访问
-proxy = "http://127.0.0.1:63571"
+# 本地代理（必填）。优先级：QUANT_PROXY 环境变量 > HTTPS_PROXY/HTTP_PROXY
+# 系统代理环境变量 > 本配置项。
+# 留空 = 自动使用系统代理环境变量（本机系统代理端口随会话变化，推荐留空）。
+proxy = ""
 # WS 组合流端点（multiplexed stream）
 ws_url = "wss://data-stream.binance.vision/stream"
 # REST 端点（K 线/历史数据）

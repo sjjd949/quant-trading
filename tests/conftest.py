@@ -87,6 +87,19 @@ def tmp_settings(tmp_config_path: Path) -> Settings:
     return load_settings(tmp_config_path)
 
 
+@pytest.fixture(autouse=True)
+def _clean_proxy_env(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """每个用例前清空代理类环境变量，保证测试不依赖机器系统代理。
+
+    真实连通性测试（``@pytest.mark.network``）保留系统代理，因其需要
+    经本机代理访问外网。
+    """
+    if request.node.get_closest_marker("network") is not None:
+        return
+    for key in ("QUANT_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def write_config(tmp_path: Path, content: str) -> Path:
     """将自定义配置内容写入 ``tmp_path/config/config.toml`` 并返回路径。"""
     config_dir = tmp_path / "config"

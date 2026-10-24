@@ -73,11 +73,17 @@ def test_missing_keys_fall_back_to_defaults(tmp_path: Path) -> None:
     assert settings.rules.volume_spike.enabled is True
 
 
-def test_repo_default_config_is_valid() -> None:
-    """仓库自带 config/config.toml 必须可加载且仅用 .vision 域名（P0-7）。"""
+def test_repo_default_config_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """仓库自带 config/config.toml 必须可加载且仅用 .vision 域名（P0-7）。
+
+    仓库配置的 proxy 留空（自动使用系统代理），测试注入系统代理环境变量
+    模拟真实部署环境。
+    """
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:18888")
     assert DEFAULT_CONFIG_PATH.is_file()
     settings = load_settings(DEFAULT_CONFIG_PATH)
     assert settings.market.symbols == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+    assert settings.network.proxy == "http://127.0.0.1:18888"
     assert "data-api.binance.vision" in settings.network.rest_url
     assert "data-stream.binance.vision" in settings.network.ws_url
     # 路径已解析为绝对路径
@@ -151,6 +157,104 @@ def test_quant_config_env_points_to_file(tmp_config_path: Path, monkeypatch: pyt
     monkeypatch.setenv("QUANT_CONFIG", str(tmp_config_path))
     settings = load_settings(None)
     assert settings.market.symbols == ["BTCUSDT", "ETHUSDT"]
+
+
+# ---------------------------------------------------------------------------
+# 代理解析三级优先级（QUANT_PROXY > 系统代理 > config.toml）
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_quant_env_beats_system_and_config(
+    tmp_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """优先级 1：QUANT_PROXY 高于系统代理与配置值。"""
+    monkeypatch.setenv("QUANT_PROXY", "http://127.0.0.1:1111")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:2222")
+    settings = load_settings(tmp_config_path)
+    assert settings.network.proxy == "http://127.0.0.1:1111"
+
+
+def test_proxy_system_env_beats_config_uppercase(
+    tmp_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """优先级 2：HTTPS_PROXY（大写）高于配置值。"""
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:3333")
+    settings = load_settings(tmp_config_path)
+    assert settings.network.proxy == "http://127.0.0.1:3333"
+
+
+def test_proxy_system_env_lowercase_keys(
+    tmp_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """优先级 2：https_proxy / http_proxy（小写）键名同样生效。"""
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:4444")
+    settings = load_settings(tmp_config_path)
+    assert settings.network.proxy == "http://127.0.0.1:4444"
+
+    monkeypatch.delenv("https_proxy")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:5555")
+    settings = load_settings(tmp_config_path)
+    assert settings.network.proxy == "http://127.0.0.1:5555"
+
+
+def test_proxy_falls_back_to_config_value(tmp_config_path: Path) -> None:
+    """优先级 3：无任何代理环境变量时使用 config.toml 的值。"""
+    settings = load_settings(tmp_config_path)
+    assert settings.network.proxy == "http://127.0.0.1:63571"
+
+
+def test_proxy_empty_config_without_env_raises(tmp_path: Path) -> None:
+    """config.toml 留空且无代理环境变量时报明确中文错误（含三种配置方式）。"""
+    config_path = write_config(
+        tmp_path,
+        '[network]\nproxy = ""\n\n[market]\nsymbols = ["BTCUSDT"]\n',
+    )
+    with pytest.raises(ConfigError, match="proxy 不能为空"):
+        load_settings(config_path)
+    with pytest.raises(ConfigError, match="HTTPS_PROXY"):
+        load_settings(config_path)
+
+
+def test_proxy_empty_env_values_are_skipped(
+    tmp_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """空字符串/纯空白的环境变量视为未设置，继续向下fallback。"""
+    monkeypatch.setenv("QUANT_PROXY", "  ")
+    monkeypatch.setenv("HTTPS_PROXY", "")
+    settings = load_settings(tmp_config_path)
+    # QUANT_PROXY 为空白被跳过 → HTTPS_PROXY 为空被跳过 → 落到配置值
+    assert settings.network.proxy == "http://127.0.0.1:63571"
+
+
+def test_resolve_proxy_unit() -> None:
+    """resolve_proxy 直接调用：三级优先级与去空白。"""
+    from quant.config import resolve_proxy
+
+    assert resolve_proxy("http://config:1") == "http://config:1"  # 无环境变量 → 配置值
+    assert resolve_proxy(None) == ""
+    assert resolve_proxy("") == ""
+    assert resolve_proxy("  http://config:1  ") == "http://config:1"  # 去首尾空白
+
+
+def test_resolve_proxy_env_priority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """resolve_proxy 环境变量优先级（大小写键名）。"""
+    from quant.config import resolve_proxy
+
+    monkeypatch.setenv("QUANT_PROXY", "http://quant:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://system:2")
+    assert resolve_proxy("http://config:3") == "http://quant:1"
+
+    monkeypatch.delenv("QUANT_PROXY")
+    assert resolve_proxy("http://config:3") == "http://system:2"
+
+    monkeypatch.setenv("QUANT_PROXY", "")
+    monkeypatch.setenv("HTTPS_PROXY", "")
+    monkeypatch.setenv("https_proxy", "http://lower:4")
+    assert resolve_proxy("http://config:3") == "http://lower:4"
+
+    monkeypatch.setenv("https_proxy", "")
+    monkeypatch.setenv("HTTP_PROXY", "http://upper:5")
+    assert resolve_proxy("http://config:3") == "http://upper:5"
 
 
 # ---------------------------------------------------------------------------

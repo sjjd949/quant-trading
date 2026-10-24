@@ -56,6 +56,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SUBPROCESS_ENV = {
     **os.environ,
     "PYTHONPATH": str(SRC_ROOT),
+    # 仓库 config.toml 的 proxy 留空（自动使用系统代理）；子进程测试经
+    # 系统代理环境变量提供代理值，模拟真实部署环境
+    "HTTPS_PROXY": "http://127.0.0.1:63571",
     **{key: "" for key in os.environ if key.startswith("QUANT_")},
 }
 for key in [key for key in SUBPROCESS_ENV if key.startswith("QUANT_")]:
