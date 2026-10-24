@@ -81,6 +81,51 @@ class RuleEngine:
         """返回全部规则名（按注册顺序）。"""
         return [rule.name for rule in self.rules]
 
+    def load_custom(self, entries: list[str]) -> None:
+        """动态加载自定义规则（``"模块路径:类名"``），引擎核心零改动。
+
+        参数:
+            entries: 自定义规则登记列表，元素形如
+                ``"quant.scanner.rules_custom_example:ExampleSurgeRule"``。
+
+        异常:
+            ValueError: 登记格式错误、导入失败、实例化失败、未继承 :class:`Rule`
+                或规则名与既有规则重复（消息为中文，便于直接展示）。
+        """
+        import importlib
+
+        for entry in entries:
+            if not isinstance(entry, str) or ":" not in entry:
+                raise ValueError(
+                    f"自定义规则登记格式错误：{entry!r}（应为 '模块路径:类名'）"
+                )
+            module_path, _, class_name = entry.partition(":")
+            module_path, class_name = module_path.strip(), class_name.strip()
+            if not module_path or not class_name:
+                raise ValueError(f"自定义规则登记格式错误：{entry!r}（模块或类名为空）")
+            try:
+                module = importlib.import_module(module_path)
+            except Exception as exc:
+                raise ValueError(f"自定义规则 {entry} 导入模块失败：{exc}") from exc
+            try:
+                rule_cls = getattr(module, class_name)
+            except AttributeError as exc:
+                raise ValueError(
+                    f"自定义规则 {entry} 模块中不存在类 {class_name}"
+                ) from exc
+            try:
+                rule = rule_cls()
+            except Exception as exc:
+                raise ValueError(f"自定义规则 {entry} 实例化失败：{exc}") from exc
+            if not isinstance(rule, Rule):
+                raise ValueError(f"自定义规则 {entry} 未继承 Rule 基类")
+            if any(existing.name == rule.name for existing in self.rules):
+                raise ValueError(
+                    f"自定义规则 {entry} 名称 {rule.name!r} 与既有规则重复"
+                )
+            self.rules.append(rule)
+            logger.info("已加载自定义规则：%s（%s）", rule.name, entry)
+
     def reset(self) -> None:
         """重置全部规则内部状态。"""
         for rule in self.rules:
