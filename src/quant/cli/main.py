@@ -44,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
         from quant.cli.review import review_main
 
         return review_main(argv_list[1:])
+    # 子命令路由：quant stress ... → 压测子命令
+    if argv_list and argv_list[0] == "stress":
+        from quant.cli.stress import stress_main
+
+        return stress_main(argv_list[1:])
 
     args = build_parser().parse_args(argv_list)
 
