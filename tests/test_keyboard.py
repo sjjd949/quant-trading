@@ -11,7 +11,7 @@ from quant.cli.keyboard import KeyboardController
 
 
 def test_map_key_bindings() -> None:
-    """p/r/q/1-4 映射到约定命令（大小写不敏感）。"""
+    """p/r/q/y/n/m/1-9 映射到约定命令（大小写不敏感）。"""
     controller = KeyboardController()
     assert controller.map_key("p") == "pause"
     assert controller.map_key("P") == "pause"
@@ -19,6 +19,11 @@ def test_map_key_bindings() -> None:
     assert controller.map_key("q") == "quit"
     assert controller.map_key("1") == "toggle_rule:1"
     assert controller.map_key("4") == "toggle_rule:4"
+    # M2 新增：y 确认 / n 忽略 / m 切模式；规则序号泛化到 1-9
+    assert controller.map_key("y") == "confirm_signal"
+    assert controller.map_key("n") == "ignore_signal"
+    assert controller.map_key("m") == "toggle_mode"
+    assert controller.map_key("9") == "toggle_rule:9"
 
 
 def test_map_key_unbound() -> None:
@@ -26,7 +31,7 @@ def test_map_key_unbound() -> None:
     controller = KeyboardController()
     assert controller.map_key("x") is None
     assert controller.map_key(" ") is None
-    assert controller.map_key("9") is None
+    assert controller.map_key("0") is None
 
 
 def test_run_in_thread_dispatches_commands() -> None:

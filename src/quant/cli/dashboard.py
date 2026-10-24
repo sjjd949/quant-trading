@@ -23,7 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from quant.feeds.base import FeedStatus
-from quant.models import Alert, Candle, Tick
+from quant.models import AccountView, Alert, Candle, Tick, market_from_symbol
 from quant.utils.timeutils import datetime_to_ms, to_iso
 
 logger = logging.getLogger("quant.cli.dashboard")
@@ -45,6 +45,10 @@ class SymbolView:
     volume: float = 0.0
     last_update_ms: int = 0
     last_signal: str = NO_SIGNAL
+    #: 市场标识（crypto/a_share/us/hk；空则按 symbol 后缀派生）
+    market: str = ""
+    #: 延迟数据标注（如 ``"~15min"``；实时源为空）
+    latency_tag: str = ""
 
 
 class DashboardState:
@@ -65,6 +69,23 @@ class DashboardState:
         self.paused: bool = False
         self.rules_enabled: dict[str, bool] = {}
         self.rule_panel_open: bool = False
+        #: 逐适配器连接状态（M2 多适配器）
+        self.adapter_statuses: dict[str, FeedStatus] = {}
+        #: 模拟盘账户视图（按市场）
+        self.paper_accounts: dict[str, AccountView] = {}
+        #: 待确认信号队列快照
+        self.pending: list = []
+        #: 模拟盘模式（auto/manual；空表示未启用）
+        self.paper_mode: str = ""
+
+    def set_adapter_status(self, name: str, status: FeedStatus) -> None:
+        """记录某适配器的连接状态（看板逐适配器展示）。"""
+        self.adapter_statuses[name] = status
+
+    def mark_latency(self, symbol: str, tag: str) -> None:
+        """标记某标的为延迟数据源（行情表行级标注）。"""
+        if tag:
+            self._ensure(symbol).latency_tag = tag
 
     def update_tick(self, tick: Tick) -> None:
         """用成交流水更新最新价与更新时间（不改动涨跌幅/成交量）。"""
@@ -102,6 +123,14 @@ class DashboardState:
         clone.paused = self.paused
         clone.rules_enabled = dict(self.rules_enabled)
         clone.rule_panel_open = self.rule_panel_open
+        clone.adapter_statuses = {
+            name: replace(status) for name, status in self.adapter_statuses.items()
+        }
+        clone.paper_accounts = {
+            market: replace(view) for market, view in self.paper_accounts.items()
+        }
+        clone.pending = list(self.pending)
+        clone.paper_mode = self.paper_mode
         return clone
 
     def _ensure(self, symbol: str) -> SymbolView:
@@ -155,7 +184,7 @@ class DashboardRenderer:
                 self._live = None
 
     def build_renderable(self, snapshot: DashboardState) -> RenderableType:
-        """组合四区为单一可渲染对象（规则面板按开关条件包含）。"""
+        """组合各区块为单一可渲染对象（规则面板/模拟盘/待确认按需包含）。"""
         from rich.console import Group
 
         parts: list[RenderableType] = [
@@ -163,12 +192,16 @@ class DashboardRenderer:
             self.build_quote_table(snapshot),
             self.build_alert_log(snapshot),
         ]
+        if snapshot.paper_accounts:
+            parts.append(self.build_paper_panel(snapshot))
+        if snapshot.pending:
+            parts.append(self.build_pending_panel(snapshot))
         if snapshot.rule_panel_open:
             parts.append(self.build_rule_panel(snapshot))
         return Group(*parts)
 
     def build_status_bar(self, snapshot: DashboardState) -> Panel:
-        """状态栏：连接状态 / 重连次数 / 规则开关数 / 暂停标记。"""
+        """状态栏：连接状态 / 重连次数 / 规则开关数 / 暂停标记 / 逐适配器状态。"""
         status = snapshot.feed_status
         connected = "●已连接" if status.connected else "○未连接"
         enabled_count = sum(1 for on in snapshot.rules_enabled.values() if on)
@@ -181,12 +214,21 @@ class DashboardRenderer:
             f" | {rules_text}",
             paused_text,
         )
+        if snapshot.paper_mode:
+            text.append(f" | 模拟盘[{snapshot.paper_mode}]", style="magenta")
+        if snapshot.adapter_statuses:
+            segments = [
+                f"{name}{'●' if st.connected else '○'}"
+                for name, st in snapshot.adapter_statuses.items()
+            ]
+            text.append(" | " + " ".join(segments), style="dim")
         return Panel(text, title="状态栏", border_style="blue")
 
     def build_quote_table(self, snapshot: DashboardState) -> Table:
-        """行情表：币种 / 最新价 / 涨跌幅% / 成交量 / 信号。"""
+        """行情表：币种 / 市场 / 最新价 / 涨跌幅% / 成交量 / 信号。"""
         table = Table(title="实时行情", expand=True)
         table.add_column("币种", style="cyan", no_wrap=True)
+        table.add_column("市场", no_wrap=True)
         table.add_column("最新价", justify="right")
         table.add_column("涨跌幅%", justify="right")
         table.add_column("成交量", justify="right")
@@ -194,15 +236,20 @@ class DashboardRenderer:
         for view in snapshot.symbols.values():
             change_style = "green" if view.change_pct >= 0 else "red"
             signal = f"⚡{view.last_signal}" if view.last_signal != NO_SIGNAL else NO_SIGNAL
+            symbol_cell = view.symbol
+            if view.latency_tag:
+                symbol_cell = f"{view.symbol} ⏱{view.latency_tag}"
+            market = view.market or market_from_symbol(view.symbol)
             table.add_row(
-                view.symbol,
+                symbol_cell,
+                _market_label(market),
                 f"{view.last_price:,.2f}",
                 Text(f"{view.change_pct:+.2f}", style=change_style),
                 f"{view.volume:,.2f}",
                 signal,
             )
         if not snapshot.symbols:
-            table.add_row("—", "—", "—", "—", "—")
+            table.add_row("—", "—", "—", "—", "—", "—")
         return table
 
     def build_alert_log(self, snapshot: DashboardState) -> Panel:
@@ -225,6 +272,49 @@ class DashboardRenderer:
 
         return Panel(Group(*lines), title="告警日志", border_style="yellow")
 
+    def build_paper_panel(self, snapshot: DashboardState) -> Panel:
+        """模拟盘账户区：分市场 现金 / 持仓市值 / 浮动盈亏 / 已实现盈亏 / 未平仓数。"""
+        table = Table(expand=True)
+        table.add_column("市场")
+        table.add_column("现金", justify="right")
+        table.add_column("持仓市值", justify="right")
+        table.add_column("浮动盈亏", justify="right")
+        table.add_column("已实现盈亏", justify="right")
+        table.add_column("未平仓", justify="right")
+        for market, view in snapshot.paper_accounts.items():
+            floating_style = "green" if view.floating_pnl >= 0 else "red"
+            realized_style = "green" if view.realized_pnl >= 0 else "red"
+            table.add_row(
+                _market_label(market),
+                f"{view.cash:,.2f}",
+                f"{view.position_market_value:,.2f}",
+                Text(f"{view.floating_pnl:+,.2f}", style=floating_style),
+                Text(f"{view.realized_pnl:+,.2f}", style=realized_style),
+                str(view.open_positions),
+            )
+        if not snapshot.paper_accounts:
+            table.add_row("—", "—", "—", "—", "—", "—")
+        title = f"模拟盘账户 [{snapshot.paper_mode}]" if snapshot.paper_mode else "模拟盘账户"
+        return Panel(table, title=title, border_style="green")
+
+    def build_pending_panel(self, snapshot: DashboardState) -> Panel:
+        """待确认区：manual 模式 FIFO 队列（y 下单 / n 忽略）。"""
+        table = Table(expand=True)
+        table.add_column("标的")
+        table.add_column("规则")
+        table.add_column("方向")
+        table.add_column("触发价", justify="right")
+        for signal in snapshot.pending:
+            table.add_row(
+                str(getattr(signal, "symbol", "—")),
+                str(getattr(signal, "rule", "—")),
+                str(getattr(signal, "direction", "—")),
+                f"{float(getattr(signal, 'trigger_value', 0.0)):,.2f}",
+            )
+        if not snapshot.pending:
+            table.add_row("—", "—", "—", "—")
+        return Panel(table, title="待确认信号（y 下单 / n 忽略）", border_style="cyan")
+
     def build_rule_panel(self, snapshot: DashboardState) -> Panel:
         """规则面板：规则序号 / 名称 / 开关状态（1-4 键切换）。"""
         table = Table(expand=True)
@@ -239,4 +329,18 @@ class DashboardRenderer:
             )
         if not snapshot.rules_enabled:
             table.add_row("—", "—", "—")
-        return Panel(table, title="规则开关（1-4 切换，r 关闭面板）", border_style="magenta")
+        return Panel(table, title="规则开关（1-9 切换，r 关闭面板）", border_style="magenta")
+
+
+#: 市场标识 → 中文标签
+_MARKET_LABELS = {
+    "crypto": "加密",
+    "a_share": "A股",
+    "us": "美股",
+    "hk": "港股",
+}
+
+
+def _market_label(market: str) -> str:
+    """市场标识转中文标签（未知原样返回）。"""
+    return _MARKET_LABELS.get(market, market or "—")

@@ -22,10 +22,18 @@ _KEY_COMMANDS: dict[str, str] = {
     "p": "pause",
     "r": "rule_panel",
     "q": "quit",
+    "y": "confirm_signal",
+    "n": "ignore_signal",
+    "m": "toggle_mode",
     "1": "toggle_rule:1",
     "2": "toggle_rule:2",
     "3": "toggle_rule:3",
     "4": "toggle_rule:4",
+    "5": "toggle_rule:5",
+    "6": "toggle_rule:6",
+    "7": "toggle_rule:7",
+    "8": "toggle_rule:8",
+    "9": "toggle_rule:9",
 }
 
 #: 读取器类型：返回单字符按键或 ``None``（无按键）
